@@ -1,0 +1,96 @@
+# Workflow name
+name: backend-workflow-cd
+
+# Triggers for the workflow
+on:
+    # Manual trigger using the workflow_dispatch event
+    workflow_dispatch:
+    # Automatic trigger on pull request events targeting the main branch
+    push:
+        branches:
+            - main
+        paths: backend/**
+permissions:
+    id-token: write
+    # for writing security events.
+    security-events: write
+    # only required for workflows in private repositories
+    actions: read
+    contents: read
+
+jobs:
+    linting:
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout code source backend
+              uses: actions/checkout@v3
+
+            - name: Set up Python
+              uses: actions/setup-python@v2
+              with:
+                  python-version: '3.10'
+
+            - name: Install Dependencies
+              run: |
+                  pip install --upgrade pipenv
+                  cd backend
+                  pipenv install flake8
+                  pipenv install
+                  pip install -r requirements.txt
+
+            # - name: Run linting
+            #   run: |
+            #       cd backend
+            #       pipenv run lint
+
+    build:
+        runs-on: ubuntu-latest
+        needs: linting
+        # environment: admin
+        steps:
+            - name: Checkout code source backend
+              uses: actions/checkout@v3
+              with:
+                  fetch-depth: 0 # This is a required field for CodeGuru
+
+            - name: Configure AWS credentials
+              uses: aws-actions/configure-aws-credentials@v2
+              with:
+                  role-to-assume: arn:aws:iam::637423333373:role/CodeGuruSecurityGitHubAccessRole
+                  aws-region: us-east-1
+                  role-session-name: GitHubActionScript
+            - name: Set up Python
+              uses: actions/setup-python@v5
+              with:
+                  python-version: '3.10'
+
+            - name: Install Dependencies
+              run: |
+                  pip install --upgrade pipenv
+                  cd backend
+                  pipenv install flake8
+                  pipenv install
+                  pip install -r requirements.txt
+
+            - name: CodeGuru Security
+              uses: aws-actions/codeguru-security@v1
+              with:
+                  source_path: ./backend
+                  aws_region: us-east-1
+                  fail_on_severity: Critical
+
+            - name: CodeGuru Reviewer
+              uses: aws-actions/codeguru-reviewer@v1.1
+              with:
+                  build_path: . # build artifact(s) directory
+                  s3_bucket: codeguru-reviewer-toannp1 # S3 Bucket with "codeguru-reviewer-*" prefix
+
+            - name: Print findings
+              run: |
+                  ls -l
+                  cat codeguru-security-results.sarif.json
+              continue-on-error: true
+            - name: Upload result
+              uses: github/codeql-action/upload-sarif@v3
+              with:
+                  sarif_file: codeguru-security-results.sarif.json
